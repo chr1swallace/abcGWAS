@@ -4,7 +4,7 @@
 \alias{plot.convergence}
 \title{plot.convergence}
 \usage{
-plot.convergence(x, ithr = 2)
+\method{plot}{convergence}(x, ithr = 2)
 }
 \arguments{
 \item{x}{object of class ABC}

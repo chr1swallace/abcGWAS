@@ -3,6 +3,9 @@
 #' @importFrom stringr str_count
 #' @importFrom cowplot plot_grid
 #' @importFrom Rcpp sourceCpp
+#' @import simGWAS
+#' @import corpcor
+#' @import mvtnorm
 NULL
 
 ################################################################################
@@ -57,14 +60,19 @@ readd <- function(d,n=NULL) {
     if(!is.null(n) && n<length(files))
         files <- files[1:n]
     message(d, ":\t", length(files), " files found")
-    pb <- txtProgressBar(min = 0, max = length(files), style = 3)
-    ret <- lapply(seq_along(files),function(i) {
-        #setTxtProgressBar(pb, i)
-        x <- fread(files[i])
-        x$ncv <- str_count(x$CV," ")+1
-        x
-    })%>%rbindlist()
-    close(pb)
+    head <- scan(files[1],what="",nlines=1)
+    ret <- fread(paste("tail -q -n +2 ",paste(files,collapse=" ")))
+    setnames(ret,head)
+#    pb <- txtProgressBar(min = 0, max = length(files), style = 3)
+#    ret <- lapply(seq_along(files),function(i) {
+#        setTxtProgressBar(pb, i)
+#        x <- fread(files[i])
+#        x$ncv <- str_count(x$CV," ")+1
+#        x$f=files[i]
+#        x
+#    })%>%rbindlist()
+                                        #    close(pb)
+    ret$ncv <- str_count(ret$CV," ")+1
     maxcv <- max(ret$ncv)
     if(maxcv==1) {
         setnames(ret,"CV","Var1")
@@ -90,7 +98,7 @@ twodt <- function(nt,snps) {
     mt2 <- as.data.table(melt(nt,value.name="count"))
     mt2[,c("Var1","Var2"):=list(as.character(Var1),as.character(Var2))]
     mt2[Var1<Var2, c("Var1","Var2"):=list(Var2,Var1)]
-    mt2 <- unique(mt2,by=c("Var1","Var2"))
+    mt2[,count:=sum(count),by=c("Var1","Var2")]
     mt2[,ncv:=2]
     N <- length(snps)
     mt2[,prior:=PI[2]/(N*(N-1)/2)]
@@ -109,7 +117,7 @@ twodt <- function(nt,snps) {
 ##' @return 0 if success
 ##' @export
 ##' @author Chris Wallace
-preshrink <- function(d,newsnps=NULL) {
+preshrink <- function(d,newsnps=NULL,newthr=NULL) {
     files <-  list.files(d,pattern="RData")
     nd <- file.path(d,".shrink")
     if(!file.exists(nd))
@@ -129,6 +137,8 @@ preshrink <- function(d,newsnps=NULL) {
             snps <- snps.all
         if(!is.null(newsnps))
             snps <- newsnps
+        if(!is.null(newthr))
+            thr <- newthr
         oname <- grep("numtested",objs,value=TRUE)
         save(list=c(oname,"snps","thr"),file=nf)
     }
@@ -159,7 +169,7 @@ readR <- function(d,n=NULL) {
         for(i in 2:length(files)) {
            setTxtProgressBar(pb, i)
            load(files[i])
-            nt1 <- nt1 + numtested
+           nt1 <- nt1 + numtested
         }
 #        return(list(ref=onedt(nt,snps),thr=thr))
     } else {
@@ -203,18 +213,20 @@ summary.ABC <- function(x) {
 ##' @return no return value
 ##' @export
 ##' @author Chris Wallace
-coverage <- function(x) {
+coverage <- function(...) coverage.ABC(...)
+##' @export
+##' @author Chris Wallace
+coverage.ABC <- function(x) {
     ux1 <- unique(x[ncv==1,],by="Var1")
     message("1CV model coverage:")
     print(summary(ux1$count))
     ux2 <- unique(x[ncv==2,],by=c("Var1","Var2"))
-    if(nrow(COV$ux2)) {
+    if(nrow(ux2)) {
         message("2CV model coverage:")
         print(summary(ux2$count))
     }
     invisible(list(ux1=ux1,ux2=ux2))
 }
-
 ################################################################################
 
 ## plotting
@@ -301,7 +313,7 @@ plot.coverage <- function(x) {
         mx <- max(c(mx,ux2$count))
     }
     p1 <- ggplot(COV$ux1,aes(x=count)) + geom_histogram(binwidth=500) + geom_vline(xintercept=0,col="red",linetype="dashed") + ggtitle("Number of one CV samples per model") 
-    if(!nrow(ux2))
+    if(!nrow(COV$ux2))
         return(p1)
     p2 <- ggplot(COV$ux2,aes(x=count)) + geom_histogram(binwidth=500) + geom_vline(xintercept=0,col="red",linetype="dashed") + ggtitle("Number of two CV samples per model")
     plot_grid(p1,p2,ncol=1,align="h")
@@ -372,18 +384,13 @@ stack.ABCpost <- function(y) {
 ##' @return
 ##' @export
 ##' @author Chris Wallace
-credset <- function(x,...) UseMethod("credset",x)
-    
-##' @export
-##' @author Chris Wallace
-credset.ABC <- function(x,size=0.99) {
-    po <- post(x,by="model")
-    credset(po)
-}
-##' @export
-##' @author Chris Wallace
-credset.postABC <- function(x,size=0.99) {
-    x[,cumpp:=cumsum(po)]
-    w <- which(x$cumpp>size)[1]
-    x[1:w,]
+credset <- function(x,size=0.99,ithr=2) {
+    po <- post(x,"model")
+    po <- po[order(po,decreasing=TRUE),]
+    po <- po[as.numeric(ssthr)==ithr,]
+    po[,cumpp:=cumsum(po)]
+    w <- which(po$cumpp>=size)
+    if(length(w))
+        return(po[1:(w[1]),])
+    return(NULL)
 }

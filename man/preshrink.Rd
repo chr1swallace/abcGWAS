@@ -4,7 +4,7 @@
 \alias{preshrink}
 \title{preshrink.}
 \usage{
-preshrink(d, newsnps = NULL)
+preshrink(d, newsnps = NULL, newthr = NULL)
 }
 \arguments{
 \item{d}{directory containing abcGWAS output}

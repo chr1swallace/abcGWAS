@@ -4,10 +4,7 @@
 \alias{coverage}
 \title{coverage of abcGWAS run}
 \usage{
-coverage(x)
-}
-\arguments{
-\item{x}{object of class ABC}
+coverage(...)
 }
 \value{
 no return value

@@ -4,7 +4,7 @@
 \alias{plot.coverage}
 \title{coverage of abcGWAS run}
 \usage{
-plot.coverage(x)
+\method{plot}{coverage}(x)
 }
 \arguments{
 \item{x}{object of class ABC}

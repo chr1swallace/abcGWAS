@@ -4,7 +4,7 @@
 \alias{plot.ABCpost}
 \title{plot posterior inference}
 \usage{
-plot.ABCpost(y, po.lower = 0)
+\method{plot}{ABCpost}(y, po.lower = 0)
 }
 \arguments{
 \item{y}{object of class postABC}

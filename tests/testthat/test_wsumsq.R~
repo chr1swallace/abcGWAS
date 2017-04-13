@@ -1,0 +1,12 @@
+set.seed(42)
+n <- 10
+x<-rnorm(n)
+y <- rnorm(n)
+w <- runif(n)
+
+load_all("~/RP/abcGWAS")
+pkg.result <- wsumsq(x,y,w)
+R.result <- sum(x*y*w)/sum(w)
+pkg.result
+R.result
+

@@ -4,7 +4,7 @@
 \alias{plot.ABC}
 \title{plotting}
 \usage{
-plot.ABC(x, what = c("coverage", "nsnp", "ncv", "model"))
+\method{plot}{ABC}(x, what = c("coverage", "nsnp", "ncv", "model"))
 }
 \arguments{
 \item{x}{object of class ABC}

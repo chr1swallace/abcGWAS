@@ -5,3 +5,7 @@ wsumsq <- function(xx, yy, ww) {
     .Call('abcGWAS_wsumsq', PACKAGE = 'abcGWAS', xx, yy, ww)
 }
 
+wsumsqmat <- function(xx, yy, ww) {
+    .Call('abcGWAS_wsumsqmat', PACKAGE = 'abcGWAS', xx, yy, ww)
+}
+
