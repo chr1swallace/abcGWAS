@@ -4,10 +4,19 @@
 \alias{reader}
 \title{reader}
 \usage{
-reader(d, ...)
+reader(d, q = 0.5, datafile = paste0(sub("/$", "", d), "_data.RData"),
+  sampledir = d, prior.n = PI, ...)
 }
 \arguments{
-\item{d}{directory or list of directories}
+\item{d}{directory within which abc samples exist}
+
+\item{q}{epsilon, specified as a specific quantile of the
+empirical dist distribution}
+
+\item{datafile}{reader expects input data for the run to be stored
+in paste0(d,".RData"), you can override this by setting
+datafile. Essential data not stored in this file will be found
+in the enclosing environment.  Required are: snp.data, dist}
 
 \item{...}{optional parameters passed to inner functions.  Most
 useful for test runs is setting n, for example setting n=10

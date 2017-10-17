@@ -1,0 +1,185 @@
+---
+title: "ABC inference for GWAS data, a walkthrough"
+author: "Chris Wallace"
+date: "`r Sys.Date()`"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{ABC inference for GWAS data, a walkthrough}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+<!-- Vignettes are long form documentation commonly included in packages. Because they are part of the distribution of the package, they need to be as compact as possible. The `html_vignette` output type provides a custom style sheet (and tweaks some options) to ensure that the resulting html is as small as possible. The `html_vignette` format: -->
+
+<!-- - Never uses retina figures -->
+<!-- - Has a smaller default figure size -->
+<!-- - Uses a custom CSS stylesheet instead of the default Twitter Bootstrap style -->
+
+# Front matter 
+
+Load the library
+
+```{r}
+library(simGWAS) # so we can simulate a GWAS result
+library(abcGWAS) 
+```
+
+# Simulate some data
+
+We need some reference haplotype frequencies from control subjects.  These can be found by taking phased haplotypes from public data sources, or by phasing genotype data you may already have, for example using [snphap](https://github.com/chr1swallace/snphap).
+
+For the purpose of this vignette, we will simulate some reference haplotypes.  The final format is a `data.frame` with n columns of 0s and 1s indicating alleles at each of n SNPs, and collections of alleles in a row being a haplotype.  A final column, named "Probability", contains the fractional frequency of each haplotype.  Note that haplotypes need not be unique, you can have one row per haplotype in a sample, and Probability set to 1/[number of haplotypes] = 1/(2*[number of samples]).  The object we are creating will be called `freq`.
+
+```{r}
+nsnps <- 20
+nhaps <- 1000
+lag <- 3 # genotypes are correlated between neighbouring variants
+maf <- runif(nsnps+lag,0.2,0.8) # common SNPs
+laghaps <- do.call("cbind", lapply(maf, function(f) rbinom(nhaps,1,f)))
+haps <- laghaps[,1:nsnps]
+for(j in 1:lag) 
+    haps <- haps + laghaps[,(1:nsnps)+j]
+haps <- round(haps/(lag+1))
+
+snps <- colnames(haps) <- paste0("s",1:nsnps)
+freq <- as.data.frame(haps+1)
+freq$Probability <- 1/nrow(freq)
+sum(freq$Probability)
+```
+
+Next, we need to specify the causal variants, and their effects on disease, as odds ratios.  We create a vector `CV` with snp names that are a subset of column names in `freq` and a vector of odds ratios.  In our simulated data, we pick two causal variants at random, with odds ratios of 1.4 and 1.2.
+
+```{r}
+CV=snps[10] # something in the middle
+g1 <- c(1.5)
+```
+
+Now we simulate the results of a GWAS.  There are two key functions, `makeGenoProbList` calculates genotype probabilities at each SNP conditional on genotypes at the causal variants, then `est_statistic` generates the vector of Z scores across all SNPs, conditional on the causal variants *and* their odds ratios.
+
+```{r}
+FP <- make_GenoProbList(snps=snps,W=CV,freq=freq)
+Zobs <- est_statistic(N0=3000, # number of controls
+              N1=2000, # number of cases
+              snps=snps, # column names in freq of SNPs for which Z scores should be generated
+              W=CV, # causal variants, subset of snps
+              gamma1=g1, # odds ratios
+              freq=freq, # reference haplotypes
+              GenoProbList=FP) # FP above
+names(Zobs) = snps
+```
+
+```{r}
+plot(1:nsnps,Zobs); abline(v=which(snps %in% CV),col="red"); abline(h=0)
+```
+
+# Try and estimate the likelihood that any individual variant is causal
+
+The essence of the ABC approach is to propose causal variant models (one or more causal SNPs together with their effect sizes), and simulate another GWAS result, then measure the distance between this simulated result and the observed result (`Zobs`, above).  We accept samples if the distance is not too large, and the acceptance rates for different SNPs approximates the posterior probability that they are causal in a standard Bayesian analysis.
+
+## Deal with LD
+when measuring distance, we need to be careful that large sets of SNPs in strong LD do not dominate.  We do this by defining weights for each SNP that will be used in the distance calculation.  The weights are calculated by an external piece of software, ldak, which you need to download from http://dougspeed.com/ldak and install in your PATH.
+
+We then calculate LD by combining the haplotypes to get a genotype dataset and applying the snpStats package ld function, and call ldak to generate the weights.  Note - for public (not simulated) reference data, both haplotypes and genotypes are often available.
+
+```{r}
+snp.data = new("SnpMatrix", haps[1:(nhaps/2),] + haps[(1+nhaps/2):nhaps,] + 1)
+weights <- ldak.weights(snp.data)
+
+```
+
+# Define distance limits
+
+A key factor here is defining what is "not too large".  We have found that in absolute terms, this is dataset dependent, but that a reasonable threshold (epsilon) can be found by taking the 0.5 (ie 50%) quantile
+$$Z* ~ MVN(Zobs,\hat\Sigma)$$
+where $\hat\Sigma$ reflects the is the signed r (not $r^2$) measure of LD calculated from snp.data.  Here we will use 1000 samples because this vignette needs to run quickly, but ordinarily you should use 10,000 - 100,000.
+```{r}
+dist= Zstar.dist(Zobs, snp.data, weights, n=10000)
+dist.threshold = quantile(Zstar, 0.5)
+hist(dist,breaks=100)
+abline(v=dist.threshold,col="red")
+```
+
+# Sample a GWAS model
+
+To allow us to stack up lots of ABC samples, the abcsample() function will store its results in a directory, which can then be summarised, and added to if needed.
+
+First, we create a directory where these files will be stored, and save the snp.data and dist objects there for future use
+
+```{r}
+tf <- tempdir()
+save(snp.data,dist,file=file.path(tf,"data.RData"))
+
+```
+Then, we generate some 1 causal variant model samples
+```{r}
+abcsample(Zo=Zobs,
+	snp.data=snp.data,
+	weights=weights,
+	freq=freq,
+	eps=dist.threshold,
+	outdir=tf,
+	N0=3000, # number of controls
+        N1=2000, # number of cases
+	nsam_model=nsnps, # number of causal variant models to consider
+	nsam_gamma=200, # number of effects to sample per variant variant
+	ncv=1 # number of causal variants per model
+)
+```
+
+Check coverage
+```{r}
+show.summary(tf)
+```
+
+Then add some 2CV model samples
+```{r}
+abcsample(Zo=Zobs,
+	snp.data=snp.data,
+	weights=weights,
+	freq=freq,
+	eps=dist.threshold,
+	outdir=tf,
+	N0=3000, # number of controls
+        N1=2000, # number of cases
+	nsam_model=nsnps/2, # number of causal variant models to consider
+	nsam_gamma=20, # number of effects to sample per variant variant
+	ncv=2 # number of causal variants per model
+)
+show.summary(tf)
+```
+
+With real data, we would consider perhaps 1000 nsam_gamma for each 1CV model and perhaps 100,000 nsam_gamma for 2CV or more.  With time, we could keep going until all possible 2CV models have some coverage:
+```{r}
+abcsample(Zo=Zobs,
+	snp.data=snp.data,
+	weights=weights,
+	freq=freq,
+	eps=dist.threshold,
+	outdir=tf,
+	N0=3000, # number of controls
+        N1=2000, # number of cases
+	nsam_model=nsnps/2, # number of causal variant models to consider
+	nsam_gamma=20, # number of effects to sample per variant variant
+	ncv=2, # number of causal variants per model,
+	method="gapfill" # specifically target models that have no or least coverage
+)
+show.summary(tf)
+```
+
+## Read the output
+```{r}
+results = reader(tf,
+eps=dist.threshold,
+snps=snps)
+```
+results is a list with two entries.  results$nt shows the total number of samples.  results$x is an ABC object we can use for posterior inference
+
+```{r}
+summary(results$x)
+post(results$x,by="model")
+```
+
+This suggests that s10 is the causal variant.  Is that right?
+```{r}
+CV
+```

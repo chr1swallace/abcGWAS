@@ -2,10 +2,10 @@
 # Generator token: 10BE3573-1514-4C36-9D1C-5A225CD40393
 
 wsumsq <- function(xx, yy, ww) {
-    .Call('abcGWAS_wsumsq', PACKAGE = 'abcGWAS', xx, yy, ww)
+    .Call('_abcGWAS_wsumsq', PACKAGE = 'abcGWAS', xx, yy, ww)
 }
 
 wsumsqmat <- function(xx, yy, ww) {
-    .Call('abcGWAS_wsumsqmat', PACKAGE = 'abcGWAS', xx, yy, ww)
+    .Call('_abcGWAS_wsumsqmat', PACKAGE = 'abcGWAS', xx, yy, ww)
 }
 
