@@ -23,16 +23,22 @@
 ##' @export
 abcsample <- function(Zo,snp.data,weights,freq,eps,outdir,N0,N1,nsam_model=100,nsam_gamma=1000,ncv=1,
                         uniqify=TRUE,method=c("random","gapfill")) {
-    snps <- colnames(snp.data)
+    snps <- setdiff(colnames(freq),"Probability")
     snps.use <- names(weights)[weights>0]
     if(!all(snps.use %in% snps))
-        stop("snps with weights must be a subset of snp.data")
-    if(!identical(c(snps,"Probability"),colnames(freq)))
-        stop("all snps must be represented in freq")
-    
-    ## subset of SNPs at which sumsq will be evaluated
+        stop("snps with non-zero weights must be a subset of freq data")
+    ## if(!identical(c(snps,"Probability"),colnames(freq)))
+    if(!all(snps.use %in% colnames(snp.data)))
+        stop("all snps with non-zero weights must be represented in snp.data")
     if(is.null(names(Zo)))
         stop("Zo is unnamed, must have names that are a subset of colnames(snp.data)")
+    if(!all(snps.use %in% names(Zo)))
+        stop("all snps with non-zero weights must have be represented in Zo")
+
+    message("SNPs in reference data: ",length(snps))
+    message("SNPs in observed Z score: ",length(Zo))
+    message("SNPs with non-zero weights: ",length(snps.use))
+    ## subset of SNPs at which sumsq will be evaluated
     weights.use<-weights[snps.use]
     snp.data.use <- snp.data[,snps.use]
     Zo <- Zo[snps.use]
@@ -85,6 +91,7 @@ abcsample <- function(Zo,snp.data,weights,freq,eps,outdir,N0,N1,nsam_model=100,n
     for(i in seq_along(totest)) {
         setTxtProgressBar(pb, i); 
         which.CV.test <- totest[[i]]
+        ## print(totest[[i]])
         CV.test<-snps[which.CV.test]
         cv.str <- paste(CV.test,collapse=" ")
         GenoProbList<-make_GenoProbList(snps.use,CV.test,freq)

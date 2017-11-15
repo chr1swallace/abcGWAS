@@ -36,29 +36,15 @@ reader <- function(d,
                    eps=0,
                    snps,
                    q=0.5,
-                   ## datafile=paste0(sub("/$","",d),"_data.RData"),
-                   datafile=file.path(d,"data.RData"),
-                   sampledir=d,prior.n=PI,...) {
-                                        #    message("reading threshold data")
-    if(!file.exists(datafile)) {
-        warning("datafile not found: ",datafile,"\nassuming snp.data and dist exist in enclosing environment")
-    } else {
-        objs <- load(datafile)
-        if("XX" %in% objs) # to accomodate older versions
-            snp.data <- XX
-    }
-    if(exists("snp.data"))
-        snps <- colnames(snp.data)
-                                        #    message("reading ABC passes")
+                   prior.n=PI,...) {
     if(eps==0)
         eps <- quantile(dist,q)
 
-    x <- readd.collapse(d,thr,collapsefiles = TRUE,...) # save(x,file="~/ret.RData")
-#    load(file="~/ret.RData"); 
+    x <- readd.collapse(d,eps,collapsefiles = TRUE,...) # save(x,file="~/ret.RData")
 #    message("reading reference data")
     sfile <- summarise_coverage(d,...)
     (load(sfile))
-    ref <- if(all(is.na(x$Var2))) {
+    ref <- if(is.null(nt2)) { #all(is.na(x$Var2))) {
                onedt(nt1,snps)
            } else {
                rbind(onedt(nt1,snps),twodt(nt2,snps))
@@ -66,8 +52,9 @@ reader <- function(d,
     vname <- grep("Var",names(ref),value=TRUE)
     x <- merge(x,ref,by=c(vname,"ncv"),all=TRUE)
     x[is.na(N),N:=0]
-    setattr(x,"thresholds",thr)
+    setattr(x,"thresholds",eps)
     setattr(x,"class",c("ABC",class(x)))
+    setattr(x,"nt",sum(ref$count))
 
     ## addprior
     nsnps <- length(snps)
@@ -76,12 +63,7 @@ reader <- function(d,
     x[,weight:=prior/count]
     x[,weight:=weight/sum(weight)]
 
-    ## this is for simulations - in real data, just the x needed
-    if("CV" %in% objs) {
-        return(list(x=x, cv=CV, eff=gamma.CV, nt=sum(ref$count)))
-    } else {
-        return(list(x=x, nt=sum(ref$count)))
-    }
+    x
 }
 
 
@@ -98,15 +80,16 @@ addprior <- function(x,nsnps,prior.n=PI) {
 ##' .. content for \details{} ..
 ##' @title Internal function
 ##' @param d directory
-##' @param thr max dist to store
+##' @param eps max dist to store
 ##' @return filename
 ##' @author Chris Wallace
 ##' @rdname filenames
-passedfile <- function(d,thr) {
-    file.path(d,sprintf("passed%4.6f.RData",thr))
+passedfile <- function(d,eps) {
+    file.path(d,sprintf("passed_%4.6f.RData",eps))
 }
-collapsedir <- function(d,thr) {
-    dc <- sprintf("%s_%4.6f",d,thr)
+##' @rdname filenames
+collapsedir <- function(d,eps) {
+    dc <- file.path(d,sprintf("filtered_%4.6f",eps))
     if(!file.exists(dc))
         dir.create(dc)
     dc
@@ -118,12 +101,12 @@ ntfiles <- function(d) {
     list.files(d,full=TRUE,pattern="file.*.RData$")
 }
 
-readd.collapse <- function(d,thr,n=NULL,force=FALSE,collapsefiles=TRUE) {
+readd.collapse <- function(d,eps,n=NULL,force=FALSE,collapsefiles=TRUE) {
     files <- samplefiles(d)
     if(!length(files))
         stop("no sample output files found in ",d)
     message(d, ":\t", length(files), " files found")
-    ofile <- passedfile(d,thr)
+    ofile <- passedfile(d,eps)
     ## case : ofile exists and is up to date
     if(!force && file.exists(ofile)) {
         i.mtime <- max(file.mtime(files))
@@ -137,13 +120,13 @@ readd.collapse <- function(d,thr,n=NULL,force=FALSE,collapsefiles=TRUE) {
 
     ## case : ofile not up to date, collapsedir supplied
     if(collapsefiles) {
-        dc <- collapsedir(d,thr)
+        dc <- collapsedir(d,eps)
         cfiles <- file.path(dc,basename(files))
         done <- sapply(cfiles,file.exists)
         todo <- which(!done)
         if(length(todo)) {
-            message("collapsing ",length(todo), " files at threshold ",thr)
-            awkstr <- paste0("awk -F'\t' '$3<",thr," {print $1}' | uniq -c")
+            message("collapsing ",length(todo), " files at threshold ",eps)
+            awkstr <- paste0("awk -F'\t' '$3<",eps," {print $1}' | uniq -c")
             pb <- txtProgressBar(min = 0, max = length(todo), style = 3)
             for(i in seq_along(todo)) {
                 j <- todo[i]
@@ -176,7 +159,7 @@ readd.collapse <- function(d,thr,n=NULL,force=FALSE,collapsefiles=TRUE) {
         ## read input files directly
 
     ## case : generate new ofile
-        awkstr <- paste0("awk '$3<",thr,"'")
+        awkstr <- paste0("awk '$3<",eps,"'")
         if(!is.null(n) && n<length(files)) {
             files <- files[1:n]
             ## ret <- fread(paste(awkstr,paste(files,collapse=" ")))
@@ -191,29 +174,35 @@ readd.collapse <- function(d,thr,n=NULL,force=FALSE,collapsefiles=TRUE) {
         setnames(ret,c("CV","N"))
     }
 
-    dim(ret)
-    ret <- ret[,.(N=sum(N)),by="CV"]
-    ret[,ncv:=str_count(CV," ")+1]
-    maxcv <- max(ret$ncv)
-    if(maxcv==1) {
-        setnames(ret,"CV","Var1")
-        ret[,Var2:=NA]
+    if(nrow(ret)) {
+        ret <- ret[,.(N=sum(N)),by="CV"]
+        ret[,ncv:=str_count(CV," ")+1]
+        maxcv <- max(ret$ncv)
+        if(maxcv==1) {
+            setnames(ret,"CV","Var1")
+            ret[,Var2:=NA]
+        } else {
+            ret[,Var1:=sub(" .*","",CV)]
+            ret[ncv==2,Var2:=sub(".* ","",CV)]
+            ret[ncv==1,Var2:=NA]
+            ret[,CV:=NULL]
+        }
+        ret[,c("Var1","Var2"):=list(as.character(Var1),as.character(Var2))]
+                                        #ret[Var1<Var2, c("Var1","Var2"):=list(Var2,Var1)]
     } else {
-        ret[,Var1:=sub(" .*","",CV)]
-        ret[ncv==2,Var2:=sub(".* ","",CV)]
-        ret[ncv==1,Var2:=NA]
-        ret[,CV:=NULL]
+        ret <- data.table(N=numeric(0),
+                          Var1=character(),
+                          Var2=character(),
+                          ncv=numeric())
     }
-    ret[,c("Var1","Var2"):=list(as.character(Var1),as.character(Var2))]
-    #ret[Var1<Var2, c("Var1","Var2"):=list(Var2,Var1)]
     save(ret,file=ofile)
     ret
 }
     
-readd <- function(d,thr,n=NULL) {
+readd <- function(d,eps,n=NULL) {
     files <- list.files(d,full=TRUE,pattern="file.*.RData$") %>% sub(".RData",".out",.)
     message(d, ":\t", length(files), " files found")
-    awkstr <- paste0("awk '$3<",thr,"'")
+    awkstr <- paste0("awk '$3<",eps,"'")
     if(!is.null(n) && n<length(files)) {
         files <- files[1:n]
         ## ret <- fread(paste(awkstr,paste(files,collapse=" ")))
@@ -283,7 +272,7 @@ twodt <- function(nt,snps) {
 ##' @return 0 if success
 ##' @author Chris Wallace
 ##' @export
-preshrink <- function(d,newsnps=NULL,newthr=NULL) {
+preshrink <- function(d,newsnps=NULL,neweps=NULL) {
     files <-  list.files(d,pattern="RData")
     nd <- file.path(d,".shrink")
     if(!file.exists(nd))
@@ -303,10 +292,10 @@ preshrink <- function(d,newsnps=NULL,newthr=NULL) {
             snps <- snps.all
         if(!is.null(newsnps))
             snps <- newsnps
-        if(!is.null(newthr))
-            thr <- newthr
+        if(!is.null(neweps))
+            eps <- neweps
         oname <- grep("numtested",objs,value=TRUE)
-        save(list=c(oname,"snps","thr"),file=nf)
+        save(list=c(oname,"snps","eps"),file=nf)
     }
     close(pb)
     0
@@ -318,12 +307,12 @@ fcombine <- function(fuse,fbak) {
     c(fuse,fbak[usebak])
 }
 
-setthr <- function(d,x,q=Q) {
+seteps <- function(d,x,q=Q) {
     (load(paste0(d,"_data.RData")))
-    thr <- quantile(dist,q)
-    x[,ssthr:=cut(sumsq, c(0,thr), include.lowest=TRUE)]
-    setattr(x,"thresholds",thr)
-    return(x[!is.na(ssthr),])
+    eps <- quantile(dist,q)
+    x[,sseps:=cut(sumsq, c(0,eps), include.lowest=TRUE)]
+    setattr(x,"thresholds",eps)
+    return(x[!is.na(sseps),])
 }
 readR <- function(d,snps,n=NULL,...) {
     files <- list.files(d,full=TRUE,pattern="RData")
@@ -342,7 +331,7 @@ readR <- function(d,snps,n=NULL,...) {
                 nt1 <- nt1 + numtested
             }
         }
-#        return(list(ref=onedt(nt,snps),thr=thr))
+#        return(list(ref=onedt(nt,snps),eps=eps))
     } else {
     ## 2CV
         ##    print(objs)
@@ -407,13 +396,13 @@ coverage.ABC <- function(x) {
 ##'
 ##' @title plot.convergence
 ##' @inheritParams summary.ABC
-##' @param ithr which threshold to use. Optional.  Default is second element in thr.
+##' @param ieps which threshold to use. Optional.  Default is second element in eps.
 ##' @return plot
 ##' @author Chris Wallace
 ##' @export
-plot.convergence <- function(x,ithr=2) {
+plot.convergence <- function(x,ieps=2) {
     x <- x[sample(1:nrow(x)),]
-    x2 <- x[as.numeric(ssthr)==ithr & count>0,]
+    x2 <- x[as.numeric(sseps)==ieps & count>0,]
     splits <- quantile(1:nrow(x2),seq(0.1,1,by=0.1))
     po <- lapply(splits, function(n) {
         x3 <- x2[1:n,.(po=sum(weight)),by=c("Var1","Var2")]
@@ -456,12 +445,12 @@ plot.ABC <- function(x,what=c("coverage","nsnp","ncv","model")){
 ##' @author Chris Wallace
 ##' @export
 plot.ABCpost <- function(y,po.lower=0) {
-    y <- y[order(y$ssthr),]
+    y <- y[order(y$sseps),]
     yvar <- intersect(names(y),c("mppi","po"))
     colvar <- intersect(names(y),c("CV","Var","ncv"))
     ncols <- length(unique(y[po>po.lower,][[colvar]]))
     y[[colvar]] <- as.factor(y[[colvar]])
-    p <- ggplot(y[po>po.lower,], aes_string(x="ssthr",y=yvar,col=colvar,group=colvar)) + geom_path()
+    p <- ggplot(y[po>po.lower,], aes_string(x="sseps",y=yvar,col=colvar,group=colvar)) + geom_path()
     if(ncols>9)
         p <- p + theme(legend.position="none")
     return(p)
@@ -534,15 +523,15 @@ post <- function(x, by=c("ncv","model","snp")) {
     class(po) <- c("mppi","ABCpost",class(po))
     po[order(po,decreasing=TRUE),]    
 }
-post.ssthr <- function(x, by=c("ncv","model","snp")) {
+post.sseps <- function(x, by=c("ncv","model","snp")) {
     by <- match.arg(by)
     dtby <- switch(by,
                    ncv="ncv",
                    c("Var1","Var2"))
-    y <- x[count>0,.(pass=sum(weight),prior=prior[1]),by=c("ssthr",dtby)]
-    y <- y[order(ssthr),]
+    y <- x[count>0,.(pass=sum(weight),prior=prior[1]),by=c("sseps",dtby)]
+    y <- y[order(sseps),]
     y[,pass:=cumsum(pass),by=dtby]
-    y[,po:=pass/sum(pass),by="ssthr"]
+    y[,po:=pass/sum(pass),by="sseps"]
     y <- y[order(po,decreasing=TRUE),]
     if(by %in% c("ncv","model")) {
         class(y) <- c("ABCpost",class(y))
@@ -559,7 +548,7 @@ post.ssthr <- function(x, by=c("ncv","model","snp")) {
         return(y)
     }
     po <- stack.ABCpost(y)
-    po <- po[,.(po=sum(po)),by=c("Var","ssthr")]
+    po <- po[,.(po=sum(po)),by=c("Var","sseps")]
     class(po) <- c("mppi","ABCpost",class(po))
     po[order(po,decreasing=TRUE),]    
 }
@@ -584,11 +573,11 @@ stack.ABCpost <- function(y) {
 ##'     individual posterior probabilities (po)
 ##' @author Chris Wallace
 ##' @export
-credset <- function(x,size=0.99,ithr=2) {
+credset <- function(x,size=0.99,ieps=2) {
     po <- post(x,"model")    
     po <- po[order(po,decreasing=TRUE),]
-    if("ssthr" %in% names(po))
-        po <- po[as.numeric(ssthr)==ithr,]
+    if("sseps" %in% names(po))
+        po <- po[as.numeric(sseps)==ieps,]
     po[,cumpp:=cumsum(po)]
     w <- which(po$cumpp>=size)
     if(length(w))
@@ -606,7 +595,7 @@ reader.old <- function(d,...) {
     ntlist <- lapply(d,readR,...)
     nt1 <- ntlist[[1]]$nt1
     nt2 <- ntlist[[1]]$nt2
-    thr <- ntlist[[1]]$thr
+    eps <- ntlist[[1]]$eps
     snps <- ntlist[[1]]$snps
     if(length(ntlist)>1) {
         for(i in 2:length(ntlist)) {
@@ -623,8 +612,8 @@ reader.old <- function(d,...) {
            }
     vname <- grep("Var",names(ref),value=TRUE)
     x <- merge(x,ref,by=c(vname,"ncv"),all=TRUE)
-    x[,ssthr:=cut(sumsq, c(0,thr), include.lowest=TRUE)]
-    setattr(x,"thresholds",thr)
+    x[,sseps:=cut(sumsq, c(0,eps), include.lowest=TRUE)]
+    setattr(x,"thresholds",eps)
     setattr(x,"class",c("ABC",class(x)))
     x
 }
@@ -649,7 +638,7 @@ readR.old <- function(d,n=NULL) {
            load(files[i])
            nt1 <- nt1 + numtested
         }
-#        return(list(ref=onedt(nt,snps),thr=thr))
+#        return(list(ref=onedt(nt,snps),eps=eps))
     } else {
     ## 2CV
         ##    print(objs)
@@ -666,5 +655,5 @@ readR.old <- function(d,n=NULL) {
         }
     }
     close(pb)    
-    return(list(nt1=nt1,nt2=nt2,snps=snps,thr=thr))
+    return(list(nt1=nt1,nt2=nt2,snps=snps,eps=eps))
 }

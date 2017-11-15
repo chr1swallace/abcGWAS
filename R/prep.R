@@ -12,10 +12,14 @@
 #' @param XX SnpMatrix
 #' @author Chris Wallace, Mary Fortune
 #' @export
-ldak.weights <- function(XX) {
+ldak.weights <- function(XX,subset=NULL) {
     shell.path <- system.file("bash",package="abcGWAS")
     shell.exec <- file.path(shell.path,"run-ldak.sh")
     d <- tempdir()
+    if(!is.null(subset)) {
+        allsnps <- colnames(XX)
+        XX <- XX[,subset]
+    }
     write.plink(file.base=file.path(d,"ldak"), snps=XX,
             phenotype=rep(1,nrow(XX)),
             pedigree=1:nrow(XX),
@@ -30,6 +34,11 @@ ldak.weights <- function(XX) {
     snpswithp <- colnames(XX)
     weights <- weight_table$V1[unlist(lapply(snpswithp,function(x){which(weight_table$V5 == x)}))]
     names(weights) <- colnames(XX)
+    if(!is.null(subset)) {
+        dropped <- setdiff(allsnps,subset)
+        weights.dropped <- structure(rep(0,length(dropped)),names=dropped)
+        weights <- c(weights,weights.dropped)[allsnps]
+    }
     weights
 }
 
